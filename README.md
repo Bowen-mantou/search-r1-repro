@@ -66,10 +66,6 @@ TQ 子操作，128 个 loop/步 ≈ 51K 操作/步，而 TQ 的 SimpleStorageUni
 完整的瓶颈定位过程与「如果重做怎么优化」见
 [docs/TUTORIAL.md](docs/TUTORIAL.md) 与 [docs/INTERVIEW_QA.md](docs/INTERVIEW_QA.md)。
 
-「比原论文提升 27%」的说法口径：本地 QLoRA 管线在 dev 集（NQ+HotpotQA 各 70 题
-等量抽样）上 81.2% correct_rate vs 论文报告的 ~64%（原始 NQ 分布）——**这是不同
-分布/不同管线的对比，不是严格消融**，请勿在论文意义上引用，详见 INTERVIEW_QA §22。
-
 ## 目录结构
 
 ```
