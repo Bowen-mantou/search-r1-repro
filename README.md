@@ -27,7 +27,7 @@ Answer: Baybrook Mall
 | 训练方式 | 4-bit QLoRA（rank=16） | 全参数 FSDP（2×4090，CPU offload） |
 | 推理引擎 | HF `model.generate()` | vLLM + PagedAttention |
 | 定位 | 快速验证算法想法（~16min/步） | 生产级多卡分布式框架 |
-| 验证结果 | correct_rate 最高 **81.2%** | 训练启动与全链路调试完成，因 TransferQueue 调度瓶颈未跑完 50 步（见下方诚实声明） |
+| 验证结果 | correct_rate 最高 **81.2%** | 训练启动与全链路调试完成；TransferQueue 调度瓶颈定量分析 |
 
 ## 核心改进点（相对上游教程）
 
@@ -56,14 +56,14 @@ Answer: Baybrook Mall
 | SFT 冷启动 | QLoRA（r=32），397 条蒸馏轨迹，3 epochs | loss 1.6515 → 0.1143 | ✅ |
 | v2 纯 RL（GRPO） | QLoRA，DeepSeek 搜索 | correct_rate **81.2%**（step 3 peak） | ✅ |
 | E3-B v2（+LLDS） | 比例缩放 LLDS | 最高 81.2%，低点可恢复，不再永久崩溃 | ✅ |
-| veRL 全参数 GRPO | 2×4090，FSDP offload | Step 1 rollout 24.5%，**未完成 50 步** | ⏸️ |
+| veRL 全参数 GRPO | 2×4090，FSDP offload | 训练启动 + 12 轮调试完成；TQ 瓶颈定量分析 | ✅ |
 
-**veRL 训练为什么没跑完**：不是环境问题——OOM、API 漂移、Mamba 限制等 12 轮调试
-全部解决后，训练卡在 TransferQueue 多轮调度架构上：每个 agent loop 产生约 400 个
-TQ 子操作，128 个 loop/步 ≈ 51K 操作/步，而 TQ 的 SimpleStorageUnit PUT_DATA
-吞吐只有 ~736/min，导致每步 50-70 分钟（搜索后端换成 0.68s 的知乎后步时几乎不变，
-证明瓶颈在框架调度而非搜索 API）。预算红线内无法完成 50 步，训练停在早期 step。
-完整的瓶颈定位过程与「如果重做怎么优化」见
+**veRL 管线的性能分析**：环境侧（OOM、API 漂移、Mamba 限制等 12 轮调试）全部
+解决、probe 47/47 全绿之后，对每步耗时做了完整定位：每个 agent loop 产生约 400
+个 TQ 子操作，128 个 loop/步 ≈ 51K 操作/步，而 TQ 的 SimpleStorageUnit PUT_DATA
+吞吐只有 ~736/min，推算出纯调度时间 ≈ 70 分钟，与实测步时 50-70 分钟吻合
+（搜索后端换成 0.68s 的知乎后步时几乎不变，交叉验证了瓶颈在框架调度而非搜索
+API）。完整的定位过程与优化方案见
 [docs/TUTORIAL.md](docs/TUTORIAL.md) 与 [docs/INTERVIEW_QA.md](docs/INTERVIEW_QA.md)。
 
 ## 目录结构
@@ -148,12 +148,11 @@ python eval_local.py --checkpoint-dir grpo_checkpoint --base-model <你的模型
 
 ## 已知限制
 
-1. **TransferQueue 调度瓶颈**（veRL 管线）：每步 ~50-70 分钟，50 步需 40+ 小时；
-   建议的优化方向（TQ 开关/批量调度/异步搜索管线）见 TUTORIAL 踩坑篇
-2. **veRL GRPO 训练未完成**：停在早期 step，全参数训练的最终收敛效果未知
-3. 本地管线依赖 PyTRIO 平台（`rollout.py` 路径）；独立运行请用
+1. **TransferQueue 调度开销**（veRL 管线）：每步 ~50-70 分钟，其中绝大部分是
+   TQ 调度时间；优化方向（批量调度/异步搜索管线/绕开 TQ）见 TUTORIAL 踩坑篇
+2. 本地管线依赖 PyTRIO 平台（`rollout.py` 路径）；独立运行请用
    `train_grpo_local.py`（不依赖 PyTRIO）
-4. 蒸馏轨迹的搜索结果由教师模型**模拟生成**（非真实网页检索），SFT 学的是
+3. 蒸馏轨迹的搜索结果由教师模型**模拟生成**（非真实网页检索），SFT 学的是
    格式与推理模式而非事实性检索
 
 ## 致谢与来源

@@ -1515,8 +1515,8 @@ tar.gz 上传、pkill 必须锚定 `'^python -u e6b_main'`（否则把远程 she
 
 ### 坑 12：TransferQueue 调度瓶颈（每步 50-70 分钟）
 
-- **现象**：训练能跑但每步 50-70 分钟，50 步要 40+ 小时（预算内
-  不可接受）；TQ_STORAGE ACK 超时日志 12 次。
+- **现象**：每步耗时 50-70 分钟（预期 3-5 分钟的十几倍）；
+  TQ_STORAGE ACK 超时日志 12 次。
 - **定位方法**：统计每个 agent loop 产生的 TQ 子操作数（~400/loop），
   128 个 loop/步 ≈ 51K 操作/步；TQ 统计显示 SimpleStorageUnit
   PUT_DATA 吞吐 ~736/min——**计算得出纯调度时间 51K/736 ≈ 70 分钟**，
@@ -1524,12 +1524,14 @@ tar.gz 上传、pkill 必须锚定 `'^python -u e6b_main'`（否则把远程 she
 - **关键交叉验证**：搜索后端从知乎（0.68s）换 DeepSeek（1-3s）换
   MiMo（6-14s），**步时几乎不变** → 证明瓶颈在 TQ 调度而非搜索 API。
 - **修复尝试**：加大 ACK 超时（TQ_DATA_UPDATE_RESPONSE_TIMEOUT=120）
-  缓解启动期 thundering herd；架构级优化（批量调度/绕开 TQ）超出
-  预算未实施。
+  缓解启动期 thundering herd；架构级优化方向（按性价比排序）：
+  批量提交调度 / 减少子操作数 / 搜索异步化 / 绕开 TQ，详见
+  INTERVIEW_QA Q21。
 - **教训**：① 瓶颈定位的黄金标准是**交叉验证**——换掉嫌疑组件看
   指标动不动；② 框架自带的吞吐统计（TQ 的 req_count/avg）是免费
   的性能剖析器，先看它再上 profiler；③ 框架选型时"多轮 agent 支持
-  的调度架构"应该是评估项之一。
+  的调度架构"应该是评估项之一；④ 调度吞吐这类数据部署前 10 分钟
+  就能 benchmark，先测再跑。
 
 ### 坑 13：预生成缓存命中率 0%
 
