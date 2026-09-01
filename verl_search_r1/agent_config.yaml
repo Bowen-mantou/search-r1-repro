@@ -1,0 +1,14 @@
+# Agent-loop configuration for Search-R1.
+#
+# veRL main 0.10+: `rollout.agent.agent_loop_config_path` must point to a YAML
+# LIST of config entries, each with `name` + `_target_`. AgentLoopWorker loads
+# this file and registers every entry by its `name`; the remaining fields are
+# passed to the loop's __init__ as kwargs.
+
+- name: search_r1_agent
+  _target_: verl_search_r1.search_agent_loop.SearchR1AgentLoop
+  search_backend: zhihu
+  search_timeout: 15.0
+  max_search_calls: 1        # 每个 agent loop 最多1次搜索
+  max_assistant_turns: 3      # 3轮：思考→搜索→回答
+  max_assistant_tokens: 1024

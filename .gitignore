@@ -1,0 +1,38 @@
+# 敏感信息（绝不提交）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 训练产物
+grpo_checkpoint/
+sft_result/
+sft_checkpoint/
+verl_checkpoints/
+eval_result/
+result/
+checkpoints/
+*.log
+swanlog/
+wandb/
+
+# 大文件
+*.tar.gz
+*.zip
+datasets/train.jsonl
+datasets/test.jsonl
+datasets/raw/
+
+# 本地调试脚本（以下划线开头）
+_*.py
+
+# IDE / 系统
+.claude/
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store

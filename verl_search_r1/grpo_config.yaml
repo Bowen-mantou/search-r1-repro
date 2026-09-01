@@ -1,0 +1,128 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Search-R1 GRPO training config for veRL (4×4090 GPUs, full-parameter)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Launch:
+#   cd verl/
+#   python -m verl.trainer.main_ppo \
+#       --config $PROJECT_DIR/verl_search_r1/grpo_config.yaml
+#
+# 注意：实际训练请优先使用 e6b_run.sh（以 veRL 自带 ppo_trainer 配置为基础 +
+# 完整 CLI override，已对齐 veRL main 0.10 键路径）。本文件是设计参考。
+#
+# Key design decisions:
+#   - GRPO (no critic) → eliminates ~40% memory vs PPO
+#   - vLLM for rollout → 2-3x faster than HF generate
+#   - FSDP for full-parameter training → no QLoRA compromise
+#   - Custom SearchR1 agent loop for multi-turn search
+#   - Rule-based reward (exact match + PRM-Lite process reward)
+
+# ── Data ──────────────────────────────────────────────────────────────────
+data:
+  train_files: $PROJECT_DIR/datasets/train.parquet
+  # If you only have JSONL, convert first:
+  #   python -c "import pandas as pd; pd.read_json('datasets/train.jsonl', lines=True).to_parquet('datasets/train.parquet')"
+  max_prompt_length: 2048
+  max_response_length: 4096
+  train_batch_size: 64       # total rollout trajectories per step
+  filter_overlong_prompts: true
+  truncation: error
+
+# ── Model ─────────────────────────────────────────────────────────────────
+actor_rollout_ref:
+  model:
+    path: wang072266/qwen3.5-4b-search-r1-sft
+    use_fused_kernels: false       # Qwen3.5 may not support fused kernels
+    trust_remote_code: true
+    enable_gradient_checkpointing: true
+    enable_activation_offload: false
+    # FSDP sharding strategy
+    fsdp_config:
+      wrap_policy:
+        min_num_params: 1000000
+      param_offload: false
+      optimizer_offload: false
+
+  # ── Actor (training) ──────────────────────────────────────────────────
+  actor:
+    # GRPO: no critic needed
+    strategy: fsdp
+    ppo_mini_batch_size: 64
+    ppo_micro_batch_size_per_gpu: 2   # small due to 24GB GPU
+    use_dynamic_bsz: true
+    ppo_max_token_len_per_gpu: 8192   # max tokens per GPU per micro-batch
+    clip_ratio: 0.2
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.2
+    entropy_coeff: 0.01
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    optim:
+      lr: 1e-6                        # full-parameter → lower LR than QLoRA
+      lr_warmup_steps: 10
+      weight_decay: 0.01
+    loss_agg_mode: token-mean
+
+  # ── Rollout (inference) ────────────────────────────────────────────────
+  rollout:
+    name: vllm
+    temperature: 1.0
+    top_p: 1.0
+    n: 8                             # GRPO group size (trajectories per question)
+    gpu_memory_utilization: 0.5      # leave room for training engine
+    enforce_eager: false             # use CUDA graph for speed
+    free_cache_engine: true
+    tensor_model_parallel_size: 1    # 4B model fits on one GPU for inference
+    max_model_len: 8192
+    max_num_batched_tokens: 32768
+    enable_chunked_prefill: true
+    # Multi-turn agent loop
+    agent:
+      default_agent_loop: search_r1_agent
+      agent_loop_config_path: $PROJECT_DIR/verl_search_r1/agent_config.yaml
+    multi_turn:
+      enable: true
+      max_assistant_turns: 6
+      format: hermes                 # Qwen-compatible tool format
+
+  # ── Reference model ───────────────────────────────────────────────────
+  ref:
+    strategy: fsdp
+    log_prob_micro_batch_size_per_gpu: 2
+    use_dynamic_bsz: true
+    log_prob_max_token_len_per_gpu: 8192
+
+# ── Algorithm ─────────────────────────────────────────────────────────────
+algorithm:
+  adv_estimator: grpo
+  # GRPO-specific: no critic, uses group-relative advantage
+  norm_adv_by_std_in_grpo: true      # normalize advantage by group std
+  use_kl_in_reward: false             # no KL penalty in reward for GRPO
+  kl_ctrl:
+    type: fixed
+    kl_coef: 0.001
+
+# ── Trainer ───────────────────────────────────────────────────────────────
+trainer:
+  nnodes: 1
+  n_gpus_per_node: 4
+  project_name: search-r1
+  experiment_name: search-r1-verl-grpo
+  save_freq: 25
+  test_freq: -1                      # disable validation during training
+  total_epochs: 1
+  total_training_steps: 50
+  logger: ["console", "wandb"]       # or: ["console"]
+  log_val_generations: 0
+  # Checkpointing
+  save_limit: 3                      # keep last 3 checkpoints
+  default_local_dir: checkpoints/
+
+# ── Reward ────────────────────────────────────────────────────────────────
+custom_reward_function:
+  path: verl_search_r1.reward_fn
+  name: search_r1_reward
+  # Optional flags (passed as kwargs to reward function)
+  enable_prm_lite: false
+  enable_lata: false
