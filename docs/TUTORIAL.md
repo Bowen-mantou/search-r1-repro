@@ -46,7 +46,7 @@
 3. **SFT 冷启动**：QLoRA 微调基座，让模型先学会搜索格式与推理模式
    （loss 1.65 → 0.11）
 4. **GRPO 强化学习**：两套实现——本地 QLoRA 管线（验证算法，correct_rate
-   最高 81.2%）+ veRL 全参数管线（生产级多卡框架）
+   最高 81.2%）+ veRL 性能分析管线（分布式推理基准框架）
 5. **评估**：70 题固定 dev 集，分数据源 EM + 格式率 + PRM 规则命中率
 
 学习路线建议：先读第 1 章理论（每节末尾有「联系本项目」小结），再跟着第 2 章
@@ -769,7 +769,7 @@ LLDS 的 `log π_ref`。代价：每轮多一次前向（本地管线不在乎�
 
 ```
 for turn_idx in range(MAX_ASSISTANT_TURNS):
-    prompts = [build_prompt(tokenizer, msgs[i]) for 未完成的轨迹 i]   # 并发批生成
+    prompts = [build_prompt(tokenizer, msgs[i]) for i, msgs_i in enumerate(msgs)]   # 并发批生成
     completions = _batch_generate(...)
     logprobs_batch = _compute_completion_logprobs(...)
     for 每条轨迹:
@@ -987,7 +987,7 @@ LATA 分组与 sqrt(L)。
 奖励偏置 = RL 学歪，而且训练 50 步后才暴露。测试在改动规则时是回归网。
 ---
 
-# 第 3 章 veRL 管线：生产级多卡全参数训练
+# 第 3 章 veRL 性能分析框架：分布式推理基准
 
 > veRL（volcengine/verl）是字节开源的 LLM 强化学习框架，Search-R1 官方
 > 实现就是在 veRL fork 上做的。我们把本地管线验证过的整套协议迁移到
