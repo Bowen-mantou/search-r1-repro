@@ -458,6 +458,15 @@ question_index 分组重算 advantage，L=0（空轨迹）时退回不除。
 开关是 `--lata`。注意 LATA 与 LLDS 正交：LLDS 管 loss（防崩），
 LATA 管 advantage（公平性）。
 
+> **面试加分点（Dr.GRPO 与 LATA 殊途同归）**：Dr.GRPO 论文
+> （arXiv 2503.20783，2025）后来独立发现：GRPO 用**组内 σ 归一化**
+> 正是长度偏差的来源之一（长轨迹在 σ 归一化下优势被放大），他们
+> 的解法是**去掉 σ 归一化、改用无偏 token 级基线**；LATA 是另一条路——
+> **用 √L 替代 σ** 做归一化。两者殊途同归，都在对"长度混进了
+> advantage 的计算"这个病开刀。面试被问"LATA 和 Dr.GRPO 什么关系"，
+> 答案就是这句：同一病灶（σ 归一化的长度偏差）的两张处方
+> （换基线 vs 换归一化因子）。
+
 ## 1.6 TITO 协议与 response_mask：哪些 token 参与训练
 
 ### 1.6.1 一条轨迹的 token 结构
