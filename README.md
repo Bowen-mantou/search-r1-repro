@@ -38,8 +38,8 @@ Answer: Baybrook Mall
    v2 比例缩放 `min(delta, 10.0)` 后低点能恢复，不再永久崩溃）
 3. **PRM-Lite 过程奖励**（`reward_lite.py`，782 行）：22 条启发式规则
    （12 惩罚 + 10 奖励）提供稠密反馈，capped 在 [-0.2, +0.2] 防止喧宾夺主
-4. **LATA 长度归一化**：`advantage = (r - mean) / sqrt(L)`，保护长推理链不被
-   系统性低估
+4. **LATA 长度归一化**：`advantage = (r - mean) / sqrt(L)`，对长轨迹优势做
+   双向减震（剥离长度噪声对优势排序的污染）
 5. **5 种可插拔搜索后端**（`search.py`）：DeepSeek Search / 知乎 / Wikipedia /
    Bing / MiMo LLM，统一 `SearchClient` 接口 + 运行时缓存 + 429 凭证轮转 +
    并发限速，全部免改训练代码即可切换
@@ -64,7 +64,7 @@ Answer: Baybrook Mall
 吞吐只有 ~736/min，推算出纯调度时间 ≈ 70 分钟，与实测步时 50-70 分钟吻合
 （搜索后端换成 0.68s 的知乎后步时几乎不变，交叉验证了瓶颈在框架调度而非搜索
 API）。完整的定位过程与优化方案见
-[docs/TUTORIAL.md](docs/TUTORIAL.md) 与 [docs/INTERVIEW_QA.md](docs/INTERVIEW_QA.md)。
+[docs/02-TUTORIAL.md](docs/02-TUTORIAL.md) 与 [docs/07-INTERVIEW_QA.md](docs/07-INTERVIEW_QA.md)。
 
 ## 目录结构
 
@@ -99,8 +99,14 @@ API）。完整的定位过程与优化方案见
 │   ├── cloud_eval.sh           # 云端评估
 │   └── E6B_DEPLOY.md           # 服务器部署清单（含止损规则）
 └── docs/
-    ├── TUTORIAL.md             # 从理论到代码到工程的完整教程
-    └── INTERVIEW_QA.md         # 28 道面试问答（含测量方法）
+    ├── README.md                  # 学习路线索引（按编号顺序阅读）
+    ├── 01-GPU-MEMORY-GUIDE.md     # GPU 显存计算专题（含练习题）
+    ├── 02-TUTORIAL.md             # 从理论到代码到工程的完整教程
+    ├── 03-CODE-异常轨迹过滤.md     # 代码带读：异常轨迹过滤
+    ├── 04-RL-METHODS-GUIDE.md     # LLM 强化学习方法全景（PPO/GRPO/DPO 家族）
+    ├── 05-SYS-ENGINEERING-GUIDE.md # 系统工程教学指南（分布式/vLLM/veRL）
+    ├── 06-veRL-导读.md            # 本项目 veRL 参数与代码速查
+    └── 07-INTERVIEW_QA.md         # 28 道面试问答（含测量方法）
 ```
 
 ## 快速开始

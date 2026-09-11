@@ -4,7 +4,7 @@
 > 本文按「理论 → 代码 → 工程」三层展开，代码部分逐文件逐段讲，工程部分每个坑给
 > 现象→根因→修复→教训。读完本文 + 跑一遍代码，你应该能向任何人讲清楚这个项目。
 >
-> 配套阅读：`../README.md`（项目概览）、`INTERVIEW_QA.md`（28 道面试问答）。
+> 配套阅读：`../README.md`（项目概览）、`07-INTERVIEW_QA.md`（28 道面试问答）。
 > 上游来源：[Search-R1 论文](https://arxiv.org/abs/2503.09516)、
 > [KMnO4-zx/agentic-rl-lab](https://github.com/KMnO4-zx/agentic-rl-lab)、
 > [PeterGriffinJin/Search-R1](https://github.com/PeterGriffinJin/Search-R1)。
