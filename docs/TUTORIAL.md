@@ -56,6 +56,19 @@
 
 # 第 1 章 理论篇
 
+> **公式符号约定**（本章所有公式统一使用，配合上下标阅读）：
+>
+> | 符号 | 含义 |
+> |---|---|
+> | πᶿ | 当前策略（θ 是策略参数，下标写法） |
+> | π₀ | rollout 时的旧策略（采样轨迹的那个模型） |
+> | πᵣ | 参考策略（LLDS/ KL 的锚点） |
+> | rᵢ / Aᵢ / Lᵢ | 第 i 条轨迹的奖励 / 优势 / 生成 token 数 |
+> | μ / σ | 组内均值 / 组内标准差 |
+> | Σₜ / Σᵢ | 对 token t 求和 / 对轨迹 i 求和 |
+> | ρ | importance ratio（新旧策略概率比） |
+> | λ / ε / β | 惩罚强度 / clip 参数 / KL 系数 |
+
 ## 1.1 检索增强推理：RAG 和 Agentic Search 的区别
 
 ### 1.1.1 什么是 RAG
@@ -126,7 +139,7 @@ GRPO 训练后（本地管线）correct_rate 到 81.2%、平均搜索 1-2.8 次�
 
 ### 1.2.1 先建三个概念
 
-**策略（policy）π_θ**：语言模型本身，输入对话历史输出下一个 token 的分布。
+**策略（policy）πᶿ**：语言模型本身，输入对话历史输出下一个 token 的分布。
 θ 是我们要训练的参数。
 
 **轨迹（trajectory）**：一次完整交互的 token 序列。本项目中 =
@@ -135,9 +148,19 @@ GRPO 训练后（本地管线）correct_rate 到 81.2%、平均搜索 1-2.8 次�
 **奖励（reward）r**：轨迹结束后环境给的标量。本项目 = 答案是否正确（EM）+ 格式
 + 过程奖励（§1.3）。
 
-强化学习的目标：**最大化期望奖励** `E_τ~π[ r(τ) ]`。
-策略梯度定理告诉我们：`∇_θ E[r] = E[ ∇_θ log π_θ(τ) · A(τ) ]`，
-其中 `A(τ)` 是轨迹的 advantage（这条轨迹比平均好多少）。这就是所有 RLHF 的根。
+强化学习的目标：**最大化期望奖励** E[ r(τ) ]，其中 τ 是从策略 π 采样的轨迹。
+策略梯度定理告诉我们：
+
+```
+∇ᶿ E[r] = E[ ∇ᶿ log πᶿ(τ) · A(τ) ]
+
+∇ᶿ     —— 对策略参数 θ 求梯度（下标 θ 表示"策略自身的参数"）
+πᶿ(τ)  —— 当前策略生成整条轨迹 τ 的概率
+A(τ)   —— 轨迹 τ 的 advantage（比平均好多少）
+含义：想让期望奖励变大，就把参数朝"高优势轨迹的生成概率上升"的方向移动。
+```
+
+这就是所有 RLHF 的根。
 
 ### 1.2.2 PPO：为什么需要 4 个模型
 
@@ -145,24 +168,31 @@ PPO 同时维护：
 
 | 模型 | 作用 | 参数量（4B 基座） | 显存（bf16） |
 |---|---|---|---|
-| Actor（策略 π_θ） | 生成文本 | 4B | ~8GB |
-| **Critic（价值 V_φ）** | 估计每个状态的期望回报，用来算 advantage | 4B | ~8GB |
-| Reference（π_ref） | 计算 KL，防止策略跑太远 | 4B | ~8GB |
+| Actor（策略 πᶿ） | 生成文本 | 4B | ~8GB |
+| **Critic（价值 Vᵩ）** | 估计每个状态的期望回报，用来算 advantage | 4B | ~8GB |
+| Reference（πᵣ） | 计算 KL，防止策略跑太远 | 4B | ~8GB |
 | Reward | 轨迹打分 | 规则或模型 | — |
 
 Critic 的显存开销 = Actor 的显存开销（还要算它的优化器状态）。
-PPO 的 advantage 是 `A = r + γV(s') - V(s)`（TD 残差），需要训练一个
+PPO 的 advantage 是 `A = r + γV(s′) − V(s)`（TD 残差），需要训练一个
 神经网络 V 来估计价值——**这是 PPO 最贵的部分**。
 
 PPO 的 clipped 目标（本项目 GRPO loss 同款）：
 
 ```
-ratio = exp(log π_θ(a|s) − log π_old(a|s))    # 新旧策略概率比
-loss  = −mean( min( ratio·A,  clip(ratio, 1−ε, 1+ε)·A ) )
+ρ    = exp( log πᶿ(a|s) − log π₀(a|s) )      # 重要性比：新旧策略概率比
+loss = −mean( min( ρ·A,  clip(ρ, 1−ε, 1+ε)·A ) )
+
+ρ        —— importance ratio：新策略与旧策略在"同一个动作"上的概率之比
+πᶿ(a|s)  —— 当前模型在状态 s 下选动作 a 的概率（训练时现算）
+π₀(a|s)  —— rollout 时旧模型在状态 s 下选动作 a 的概率（采样时算好存下来）
+min(·,·) —— 在"不裁剪项"与"裁剪项"中取较小的（保守方向）
+clip(ρ, 1−ε, 1+ε) —— 把 ρ 夹在 [1−ε, 1+ε] 区间（ε=0.2）
+A        —— advantage
 ```
 
 clip 的意义：当 ratio 偏离 1 太远（ε=0.2）时截断梯度，
-让策略「小步快走」，防止一次更新把策略打坏。`log π_old` 在 rollout 时用旧模型
+让策略「小步快走」，防止一次更新把策略打坏。`log π₀` 在 rollout 时用旧模型
 算好存下来，训练时只需算当前模型的前向。
 
 ### 1.2.3 GRPO：砍掉 Critic，用组内比较
@@ -172,10 +202,17 @@ GRPO（Group Relative Policy Optimization，DeepSeekMath 2024 提出）的核心
 不需要 Critic 来估计绝对价值：
 
 ```
-对问题 q，采样 N 条轨迹 r_1, ..., r_N
-mean = (1/N) Σ r_i
-std  = sqrt( (1/N) Σ (r_i − mean)² )          # 组内标准差
-A_i  = (r_i − mean) / (std + ε)               # 组内归一化 advantage
+对问题 q，采样 N 条轨迹，得到 N 个奖励 r₁, r₂, ..., r_N：
+
+μ  = (1/N) Σᵢ rᵢ                        # 组内均值
+σ  = √( (1/N) Σᵢ (rᵢ − μ)² )            # 组内标准差
+Aᵢ = (rᵢ − μ) / (σ + ε)                 # 第 i 条轨迹的组内归一化 advantage
+
+rᵢ —— 第 i 条轨迹的奖励（i = 1..N，比如 1.0/0.0/−0.1）
+μ  —— 同题 N 条轨迹奖励的平均值，代表"这道题的平均水平"
+σ  —— 同题 N 条轨迹奖励的标准差，代表"这组奖励的波动幅度"
+ε  —— 极小常数（如 1e-8），防止 σ=0（全组奖励相同）时除零
+Aᵢ —— 第 i 条轨迹的 advantage："比平均水平好/坏多少个标准差"
 ```
 
 直觉：假设同题 8 条轨迹，4 条答对（r=1）、4 条答错（r=0）：
@@ -202,17 +239,17 @@ GRPO loss（本项目 `train_grpo_local.py:grpo_loss` 的实现）：
 
 ```python
 loss = -(advantages * mean_lp).mean()
-# mean_lp = 每条轨迹 loss_mask 内 token 的平均 log π_θ
+# mean_lp = 每条轨迹 loss_mask 内 token 的平均 log πᶿ
 # advantages = 组内归一化后的 advantage（向量化）
 ```
 
 ### 1.2.4 GRPO 的两个重要细节
 
 **KL 约束**：GRPO 论文在 reward 里减 KL 项防止策略跑飞：
-`r_final = r − β·KL(π_θ || π_ref)`。本项目本地管线用 **LLDS**（§1.4）替代
+`r_final = r − β·KL(πᶿ ‖ πᵣ)`。本项目本地管线用 **LLDS**（§1.4）替代
 KL 的防崩作用；veRL 管线则直接关掉 ref（`use_kl_loss=false`，理由见 §3.4）。
 
-**importance sampling 的 log π_old**：loss 里的 ratio 需要 rollout 时旧策略的
+**importance sampling 的 log π₀**：loss 里的 ratio 需要 rollout 时旧策略的
 token logprob。本地管线在 rollout 时额外做一次前向（`_compute_completion_logprobs`）
 存到 `Turn.logprobs`；veRL 由框架自动算 old_log_prob。
 
@@ -313,7 +350,7 @@ step 56  correct_rate = 3.1%    ← 崩了
 
 崩溃的机制链条（LLD = Lazy Likelihood Displacement，懒惰似然位移）：
 
-1. **GRPO 的 loss = −A·log π_θ**。正 advantage 的 token 被拉高似然，
+1. **GRPO 的 loss = −A·log πᶿ**。正 advantage 的 token 被拉高似然，
    负 advantage 的 token 被压低似然。更新只有"推"没有"拉回"。
 2. **当组内答案方差大**，advantage 幅度大，梯度对 log π 的"压低"非常用力。
 3. 某些原本高似然的正确 token（SFT 学的、或早期 RL 学的）被反复压低 →
@@ -333,14 +370,23 @@ LLDS（Lazy Likelihood-Displacement Stabilization）在 GRPO loss 上叠加一�
 **单向似然保持惩罚**：
 
 ```
-L_llds = λ · Σ_t max( 0,  log π_ref(t) − log π_θ(t) )
+P_llds = λ · Σₜ max( 0,  log πᵣ(t) − log πᶿ(t) )
+
+P_llds  —— LLDS 惩罚项（加在 GRPO loss 上的额外损失）
+λ       —— 惩罚强度系数（本项目 0.05）
+Σₜ      —— 对轨迹里每个参与训练的 token t 求和
+πᵣ(t)   —— 参考策略（rollout 时的旧策略）对 token t 的对数概率，采样时存好
+πᶿ(t)   —— 当前策略对【同一个】token t 的对数概率
+max(0,·)—— 单向开关：括号内为正 → 按差距惩罚；为负 → 归零不罚
 ```
 
 解读：对每个参与训练的 token t：
-- `log π_ref(t)` = 旧策略（rollout 时）对该 token 的 logprob（我们采样时
+- `log πᵣ(t)` = 旧策略（rollout 时）对该 token 的 logprob（我们采样时
   顺手存的）；
-- 若当前策略的似然**高于**旧策略 → max(0, 负数) = 0，不惩罚（允许变好）；
-- 若当前策略的似然**低于**旧策略 → 惩罚与"掉了多少"成正比。
+- 若当前策略的似然**高于**旧策略（πᶿ ≥ πᵣ）→ 括号内为负 → max 取 0，
+  不惩罚（允许变好）；
+- 若当前策略的似然**低于**旧策略（πᶿ < πᵣ）→ 括号内为正 → 惩罚与
+  "掉了多少"成正比（掉得越多，罚得越重）。
 - **单向性（max 操作）是整个设计的灵魂**：它只阻止"变坏"，不阻止"变好"。
   这是它区别于普通 KL 惩罚的地方（KL 是双向对称的，会拖慢收敛）。
 
@@ -358,8 +404,8 @@ L_llds = λ · Σ_t max( 0,  log π_ref(t) − log π_θ(t) )
 分析：v1 的惩罚是固定幅度的（惩罚不随似然下降量变化），λ=0.05 相对
 GRPO 的 advantage 梯度太弱——优势项一放大就把惩罚淹没，等于没防。
 
-**v2（比例缩放）**：惩罚改为与似然下降量成正比（`Σ max(0, log π_ref −
-log π_θ)`，实现中早期还带 `min(delta, 10.0)` 上限防单 token 爆炸）：
+**v2（比例缩放）**：惩罚改为与似然下降量成正比（`Σₜ max(0, log πᵣ −
+log πᶿ)`，实现中早期还带 `min(delta, 10.0)` 上限防单 token 爆炸）：
 - 最高 correct_rate **81.2%**（step 3，追平纯 RL 峰值）；
 - 关键区别：**低点能恢复**。掉到 3.1% 后能爬回 54.7%，不再永久崩溃；
 - 代价：批次方差大（难题多的批次 anomalous 高达 50/64 条）——防崩≠消除方差。
@@ -387,18 +433,23 @@ GRPO 的 advantage 只比较 reward。但**长轨迹天然吃亏**：
 ### 1.5.2 公式与直觉
 
 ```
-A_lata = (r − mean_group) / sqrt(L)
-L = 该轨迹全部 completion token 数（assistant 生成部分）
+Âᵢ = (rᵢ − μ_group) / √Lᵢ
+
+Âᵢ      —— LATA 归一化后的第 i 条轨迹 advantage（覆盖原组内 advantage）
+rᵢ      —— 第 i 条轨迹的最终奖励（outcome + PRM-Lite 叠加后）
+μ_group —— 同题组（同一 question_index）的平均奖励
+Lᵢ      —— 第 i 条轨迹模型生成的 token 总数（所有轮 completion_tokens 求和）
+√Lᵢ     —— 开根号：长度归一因子
 ```
 
-为什么是 **sqrt(L)** 而不是 L 或 log(L)：
+为什么是 **√L** 而不是 L 或 log(L)：
 
 - **除以 L**：过强。假设轨迹是"每步独立同分布地贡献噪声"，则总奖励的标准差
-  ∝ sqrt(L)（独立随机变量和的方差 ∝ L，标准差 ∝ sqrt(L)）。除以 sqrt(L)
+  ∝ √L（独立随机变量和的方差 ∝ L，标准差 ∝ √L）。除以 √L
   恰好把不同长度轨迹的 advantage **拉回同一尺度**，这是中心极限定理给的
   启发式。除以 L 会把长轨迹压成 0，信号全无。
 - **不除**：长轨迹方差大，advantage 排序被长度主导。
-- sqrt(L) 是最温和且理论有据的折中：L=100 → 除 10，L=400 → 除 20，
+- √L 是最温和且理论有据的折中：L=100 → 除 10，L=400 → 除 20，
   差 2 倍而不是 4 倍。
 
 **联系本项目**：`reward_lite.py:LATAScaler.compute_advantages` 按
@@ -424,7 +475,7 @@ Answer: Baybrook Mall                          ← 模型生成，训练 ✓
 TITO（Token-In-Token-Out）协议：**输入输出全是 token**。agent loop 把
 搜索结果 token 化后直接拼进序列，`response_mask` 标记每个 token 是否参与训练：
 
-- 模型生成的 token → mask = 1（这些是策略 π_θ 的产物，GRPO 优化它们）
+- 模型生成的 token → mask = 1（这些是策略 πᶿ 的产物，GRPO 优化它们）
 - 搜索结果的 token → mask = 0（这些是**环境**的产物，不是策略的产物）
 
 ### 1.6.2 为什么搜索结果 token 必须 mask
@@ -763,7 +814,7 @@ token。早期版本用 `outputs[i, prompt_len:]` 切片（prompt_len=原始长�
 rollout 后对 prompt+completion 做一次**无梯度前向**，在位置
 `prompt_len + j − 1` 的 logits 上取 token_j 的 logprob（第 j 个 completion
 token 由第 prompt_len+j−1 个位置的输出预测）。这就是 `Turn.logprobs`，
-LLDS 的 `log π_ref`。代价：每轮多一次前向（本地管线不在乎这点时间）。
+LLDS 的 `log πᵣ`。代价：每轮多一次前向（本地管线不在乎这点时间）。
 
 ### 2.8.4 `rollout_question`：单题多轮状态机
 
@@ -980,7 +1031,7 @@ r=32 比 RL 阶段 r=16 大是合理的：SFT 要学的分布变化（从不会�
 test_llds 覆盖：对齐逻辑（prompt/observation 补零、右移）、三变体门控、
 mask_answer 交互、长度不匹配报错、空轨迹报错。
 test_reward_lite 覆盖：22 条规则逐一构造正/负样例、互斥逻辑、cap 边界、
-LATA 分组与 sqrt(L)。
+LATA 分组与 √L 归一。
 
 **为什么要给启发式规则写这么多测试**：规则是"业务逻辑"，边界情况
 （空 query、全停用词、单结果、超长文本）极易静默算错；错一条规则 =
@@ -1062,7 +1113,7 @@ LATA 分组与 sqrt(L)。
    → 产出 AgentLoopOutput × 32（含 response_mask）
 
 ③ old_log_prob 计算（~8% 步时）
-   FSDP 引擎对 32 条轨迹做一次无梯度前向，存 π_old（GRPO ratio 分母）
+   FSDP 引擎对 32 条轨迹做一次无梯度前向，存 π₀（GRPO ratio 分母）
 
 ④ 奖励计算（~几秒，CPU）
    RewardLoopWorker 解码轨迹 → reward_fn：
@@ -1408,7 +1459,7 @@ tar.gz 上传、pkill 必须锚定 `'^python -u e6b_main'`（否则把远程 she
 - **现象**：E1-A 56 步 correct 3.1%（从 81.2% 崩）；E3-B v1 step 63 崩到 1.6%。
 - **根因**：GRPO 无 KL 约束时，advantage 主导的梯度单向压低似然 → 正反馈
   螺旋（§1.4）。
-- **修复**：LLDS 比例惩罚 `Σ max(0, log π_ref − log π_θ)`。v2 不再永久
+- **修复**：LLDS 比例惩罚 `Σₜ max(0, log πᵣ − log πᶿ)`。v2 不再永久
   崩溃（低点 3.1% → 恢复 54.7%）。
 - **教训**：正则化强度必须与被防护量同阶；「reward 上升」不等于
   「训练健康」，要同时监控 log-likelihood。
